@@ -1,0 +1,6 @@
+anthropic
+feedparser
+youtube-transcript-api
+sendgrid
+python-dotenv
+pyyaml
