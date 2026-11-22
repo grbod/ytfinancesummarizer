@@ -1,6 +1,7 @@
 anthropic
 feedparser
 youtube-transcript-api
+requests
 sendgrid
 python-dotenv
 pyyaml

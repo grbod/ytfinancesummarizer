@@ -19,9 +19,9 @@ import feedparser
 import yaml
 from anthropic import Anthropic
 from dotenv import load_dotenv
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail
 from youtube_transcript_api import YouTubeTranscriptApi
+
+from cf_mail import email_provider, send_html_email
 
 try:
     from youtube_transcript_api.proxies import GenericProxyConfig
@@ -577,37 +577,27 @@ def parse_recipient_emails(raw: str) -> List[str]:
 
 
 def send_digest_email(
-    api_key: str, sender_email: str, recipient_emails: List[str], subject: str, html_body: str
+    sender_email: str, recipient_emails: List[str], subject: str, html_body: str
 ) -> None:
-    message = Mail(
-        from_email=sender_email,
-        to_emails=recipient_emails,
-        subject=subject,
-        html_content=html_body,
-    )
-    sg = SendGridAPIClient(api_key)
-    response = sg.send(message)
-    status_code = getattr(response, "status_code", None)
-    LOGGER.info("SendGrid response: status=%s", status_code if status_code is not None else "unknown")
-    if status_code is None or status_code >= 400:
-        raise RuntimeError(f"SendGrid returned non-success status: {status_code}")
+    """Raises on failure. Provider (Cloudflare or SendGrid fallback) is chosen in cf_mail."""
+    send_html_email(sender_email, recipient_emails, subject, html_body)
 
 
 def send_error_alert_email(errors: List[str]) -> None:
     if not errors:
         return
 
-    sendgrid_api_key = os.getenv("SENDGRID_API_KEY", "").strip()
     sender_email = os.getenv("SENDER_EMAIL", "").strip()
     alert_recipients_raw = os.getenv("ALERT_RECIPIENT_EMAILS", "").strip()
     recipient_emails = parse_recipient_emails(
         alert_recipients_raw or os.getenv("RECIPIENT_EMAILS", "")
     )
 
-    if not sendgrid_api_key or not sender_email or not recipient_emails:
+    if not email_provider() or not sender_email or not recipient_emails:
         LOGGER.error(
-            "Unable to send error alert email. Required config missing (SENDGRID_API_KEY, "
-            "SENDER_EMAIL, RECIPIENT_EMAILS/ALERT_RECIPIENT_EMAILS)."
+            "Unable to send error alert email. Required config missing (CLOUDFLARE_ACCOUNT_ID and "
+            "CLOUDFLARE_EMAIL_API_TOKEN, or SENDGRID_API_KEY; SENDER_EMAIL; "
+            "RECIPIENT_EMAILS/ALERT_RECIPIENT_EMAILS)."
         )
         return
 
@@ -631,7 +621,6 @@ def send_error_alert_email(errors: List[str]) -> None:
 
     try:
         send_digest_email(
-            api_key=sendgrid_api_key,
             sender_email=sender_email,
             recipient_emails=recipient_emails,
             subject=subject,
@@ -722,13 +711,13 @@ def run_pipeline(args: argparse.Namespace, project_root: Path, errors: List[str]
         save_state(state_path, state)
         return 0
 
-    sendgrid_api_key = os.getenv("SENDGRID_API_KEY", "").strip()
     sender_email = os.getenv("SENDER_EMAIL", "").strip()
     recipient_emails = parse_recipient_emails(os.getenv("RECIPIENT_EMAILS", ""))
 
-    if not sendgrid_api_key or not sender_email or not recipient_emails:
+    if not email_provider() or not sender_email or not recipient_emails:
         error_msg = (
-            "SENDGRID_API_KEY, SENDER_EMAIL, and RECIPIENT_EMAILS are required to send email."
+            "Cloudflare (CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_EMAIL_API_TOKEN) or SENDGRID_API_KEY, "
+            "SENDER_EMAIL, and RECIPIENT_EMAILS are required to send email."
         )
         LOGGER.error(error_msg)
         errors.append(error_msg)
@@ -737,7 +726,6 @@ def run_pipeline(args: argparse.Namespace, project_root: Path, errors: List[str]
 
     try:
         send_digest_email(
-            api_key=sendgrid_api_key,
             sender_email=sender_email,
             recipient_emails=recipient_emails,
             subject=subject,
